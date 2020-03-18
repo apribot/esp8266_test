@@ -18,48 +18,54 @@
 
 #define NUM_LEDS 6
 #define DATA_PIN 14
+#define BRIGHTNESS 90
+#define FRAMES_PER_SECOND  120
 
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #ifndef STASSID
-#define STASSID "#####"
-#define STAPSK  "#####"
+#define STASSID "####"
+#define STAPSK  "####"
 #endif
+
+uint8_t ledMode = 0;
 
 const char* ssid = STASSID;
 const char* password = STAPSK;
 CRGB leds[NUM_LEDS];
+uint8_t gHue = 0;
 
 ESP8266WebServer server(80);
 
-const int led = 13;
+void prepDisplay() {
+  display.clearDisplay();
+  display.setTextSize(1);             // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE);        // Draw white text
+  display.setCursor(0,0);             // Start at top-left corner
+}
 
 void handleRoot() {
-  server.send(200, "text/html", "<html><body><a href=\"on\"><button>on</button></a><br><a href=\"off\"><button>off</button></a></body></html>");
+  server.send(200, "text/html", "<html><head><style>button{width:200px;height:50px;}</style></head><body><a href=\"light?on\"><button>on</button></a><br><a href=\"light?off\"><button>off</button></a></body></html>");
 }
 
-void lightOn() {
-
-  for( int i = 0; i < NUM_LEDS; i++) {
-      leds[i] = CRGB::Red;
+void lightHandler() {  
+  if( server.hasArg("on") ) {    
+    ledMode = 1;
+  } else if ( server.hasArg("off") ){
+    ledMode = 0;
+    
+    for( int i = 0; i < NUM_LEDS; i++) {
+        leds[i] = CRGB::Black;
+    }
+    
+    FastLED.show();
   }
-  
-  FastLED.show();
-  handleRoot();
-}
-
-void lightOff() {
-  for( int i = 0; i < NUM_LEDS; i++) {
-      leds[i] = CRGB::Black;
-  }
-  FastLED.show();
   handleRoot();
 }
 
 void handleNotFound() {
-  digitalWrite(led, 1);
   String message = "File Not Found\n\n";
   message += "URI: ";
   message += server.uri();
@@ -72,64 +78,65 @@ void handleNotFound() {
     message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
   }
   server.send(404, "text/plain", message);
-  digitalWrite(led, 0);
+}
+
+void drawTwinkles() {
+  fill_rainbow(leds, NUM_LEDS, gHue, 7);
 }
 
 void setup(void) {
-  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
-  pinMode(led, OUTPUT);
-  digitalWrite(led, 0);
-  Serial.begin(115200);
+  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS)
+    .setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(BRIGHTNESS);
 
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C for 128x32
-    Serial.println(F("SSD1306 allocation failed"));
     for(;;); // Don't proceed, loop forever
   }
 
-  display.clearDisplay();
-  display.setTextSize(1);             // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);        // Draw white text
-  display.setCursor(0,0);             // Start at top-left corner
-  
+  prepDisplay();
   display.println("Connecting...");
+  display.display();
+  
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  
-
-
 
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
   }
-  display.clearDisplay();
-  display.setTextSize(1);             // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);        // Draw white text
-  display.setCursor(0,0);             // Start at top-left corner
   
-  display.println("Connected to ");
+  prepDisplay();  
   display.println(ssid);
-  display.println("IP address: ");
   display.println(WiFi.localIP());
-  display.display();
   
   if (MDNS.begin("esp8266")) {
-    Serial.println("MDNS responder started");
+    display.println("MDNS responder ok");
   }
 
   server.on("/", handleRoot);
 
-  server.on("/on", lightOn);
-  server.on("/off", lightOff);
+  server.on("/light", HTTP_GET, lightHandler);
 
 
   server.onNotFound(handleNotFound);
 
   server.begin();
-  Serial.println("HTTP server started");
+  
+  display.println("HTTP server started");
+  display.display();
 }
 
 void loop(void) {
   server.handleClient();
   MDNS.update();
+
+  if(ledMode == 1) {
+    drawTwinkles();
+    FastLED.show();  
+    // insert a delay to keep the framerate modest
+    FastLED.delay(1000/FRAMES_PER_SECOND); 
+  
+    EVERY_N_MILLISECONDS( 20 ) { gHue++; }
+
+  } 
 }
